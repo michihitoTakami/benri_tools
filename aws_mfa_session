@@ -1,47 +1,41 @@
 #!/bin/bash
 
-# ~/.aws/credentials ファイルのパスを設定
-CREDENTIALS_FILE=~/.aws/credentials
+# ~/.aws/credentialsからプロファイル名を取得
+profiles=$(grep -oP '(?<=\[)[^\]]+' ~/.aws/credentials)
 
-# ファイルが存在するか確認
-if [ ! -f "$CREDENTIALS_FILE" ]; then
-    echo "Error: $CREDENTIALS_FILE does not exist."
-    exit 1
-fi
-
-# プロファイル名を取得
-profiles=($(grep -oP '^\s*\[\K[^\]]+' "$CREDENTIALS_FILE"))
-
-# プロファイル名を表示して選択させる
-echo "Available AWS profiles:"
-select aws_profile in "${profiles[@]}"; do
+# プロファイル名の選択
+echo "利用可能なプロファイル:"
+select aws_profile in $profiles; do
     if [ -n "$aws_profile" ]; then
         break
     else
-        echo "Invalid selection. Please try again."
+        echo "有効なプロファイルを選択してください。"
     fi
 done
 
-# MFA ARNを入力
-read -p "Enter your MFA ARN: " mfa_arn
+# ~/.aws/mfaからMFA ARNを取得
+if [ -f ~/.aws/mfa ]; then
+    mfa_arns=$(cat ~/.aws/mfa)
+    echo "利用可能なMFA ARN:"
+    select mfa_arn in $mfa_arns; do
+        if [ -n "$mfa_arn" ]; then
+            break
+        else
+            echo "有効なMFA ARNを選択してください。"
+        fi
+    done
+else
+    echo "MFA ARNを入力してください:"
+    read mfa_arn
+fi
 
-# トークンコードを入力
-read -p "Enter your token code: " token_code
+# トークンコードの入力
+echo "トークンコードを入力してください:"
+read token_code
 
-# AWS CLIを使用してセッショントークンを取得
-session_info=$(aws sts get-session-token --serial-number "$mfa_arn" --profile "$aws_profile" --token-code "$token_code")
+# AWSコマンドの実行
+result=$(aws sts get-session-token --serial-number "$mfa_arn" --profile "$aws_profile" --token-code "$token_code")
 
-# セッション情報からアクセスキー、シークレットキー、セッショントークンを抽出
-access_key=$(echo "$session_info" | jq -r '.Credentials.AccessKeyId')
-secret_key=$(echo "$session_info" | jq -r '.Credentials.SecretAccessKey')
-session_token=$(echo "$session_info" | jq -r '.Credentials.SessionToken')
+# JSONの解析と環境変数の出力
+echo "$result" | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\"\(.AccessKeyId)\"\nexport AWS_SECRET_ACCESS_KEY=\"\(.SecretAccessKey)\"\nexport AWS_SESSION_TOKEN=\"\(.SessionToken)\""'
 
-# 環境変数をエクスポート
-echo "export AWS_ACCESS_KEY_ID=\"$access_key\""
-echo "export AWS_SECRET_ACCESS_KEY=\"$secret_key\""
-echo "export AWS_SESSION_TOKEN=\"$session_token\""
-
-# ユーザーに環境変数をセットする方法を指示
-echo ""
-echo "To set these environment variables, run:"
-echo "eval \$($(basename "$0"))"
